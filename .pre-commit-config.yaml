@@ -1,0 +1,82 @@
+repos:
+  # Formatting tools
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        args:
+          - "--line-length=119"
+          - "--include=\\.pyi?$"
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args:
+          - --profile=black
+
+  - repo: https://github.com/myint/autoflake
+    rev: v2.2.1
+    hooks:
+      - id: autoflake
+        args: [ --in-place, --remove-unused-variables, --remove-all-unused-imports ]
+        files: \.py$
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.15.0
+    hooks:
+      - id: pyupgrade
+        args: [ --py38-plus ]
+
+  # Code quality and linting
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: fix-encoding-pragma
+        args: [ --remove ]
+      - id: check-yaml
+      - id: debug-statements
+
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-use-type-annotations
+
+
+  # Dependency management
+  - repo: https://github.com/peterdemin/pip-compile-multi
+    rev: v2.6.2
+    hooks:
+      - id: pip-compile-multi-verify
+
+  - repo: https://github.com/asottile/setup-cfg-fmt
+    rev: v2.5.0
+    hooks:
+      - id: setup-cfg-fmt
+        args: [ "--max-py-version=3.12" ]
+
+  # Documentation and commit checks
+  - repo: local
+    hooks:
+      - id: rst-lint
+        name: rst
+        entry: rst-lint --encoding utf-8
+        files: ^(RELEASING.rst|README.rst|TIDELIFT.rst)$
+        language: python
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.13.0
+    hooks:
+      - id: commitizen
+        stages: [ commit-msg ]
+
+  # Custom checks
+  - repo: local
+    hooks:
+      - id: pytest-staged
+        name: test on Staged
+        entry: sh -c 'pytest $(git diff --name-only --cached | grep -E "\\.py$") || exit 0'
+        stages: [ pre-commit ]
+        language: python

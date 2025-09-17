@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sips-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - environment.env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /home/application/minio/volumes:/data
+    env_file:
+      - environment.env
+    command: server /data --console-address ":9001"
+    
+  
+  
