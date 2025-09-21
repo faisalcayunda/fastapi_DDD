@@ -1,8 +1,8 @@
-from .ports import PasswordHasher, TokenService, UserRepo
+from .ports import PasswordHasher, TokenService, UserRepository
 
 
 class Login:
-    def __init__(self, repo: UserRepo, hasher: PasswordHasher, token_service: TokenService):
+    def __init__(self, repo: UserRepository, hasher: PasswordHasher, token_service: TokenService):
         self.repo = repo
         self.hasher = hasher
         self.token_service = token_service
