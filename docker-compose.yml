@@ -24,6 +24,3 @@ services:
     env_file:
       - environment.env
     command: server /data --console-address ":9001"
-    
-  
-  

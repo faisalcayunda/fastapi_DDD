@@ -1,379 +1,392 @@
-# Portal Satu Peta Backend
+# ARCHITECTURE — Modular Monolith by Feature (DDD-friendly)
 
-Backend for the Portal Satu Peta application.
+> This project uses a **Modular Monolith by Feature (Vertical Slice)**. Each feature encapsulates its own domain (`entities`), application logic (`use_cases`), adapters (repositories/presenters), and API layer (routers/schemas). Frameworks (FastAPI), persistence (SQLAlchemy), and configuration live at the **platform edge**.
 
-## Folder Structure
+---
+
+## 1. Core Principles
+
+- **Feature-first packaging**: `features/<context>` keeps code cohesive and extractable later.
+- **Dependency rule** (inward only):
+  `api → use_cases → entities` and `use_cases → (ports) → adapters`.
+  Domain (entities) **never imports** FastAPI/SQLAlchemy/Pydantic.
+- **Pure domain**: Entities/VOs are plain Python; persistence & transport concerns are adapters.
+- **Testability**: Unit test the domain + use cases with fakes; integration tests cover adapters; API tests use `TestClient`.
+
+---
+
+## 2. Directory Layout
+
 ```
-├── .env.example                # Contoh file environment
-├── .github/                    # Konfigurasi GitHub Actions
-│   └── workflows/
-│       └── deploy.yml          # Workflow untuk deployment
-├── .gitignore                  # Daftar file/folder yang diabaikan Git
-├── .pre-commit-config.yaml     # Konfigurasi pre-commit hooks
-├── Dockerfile                  # Instruksi build Docker image
-├── README.md                   # Dokumentasi proyek (file ini)
-├── alembic.ini                 # Konfigurasi Alembic untuk migrasi database
-├── app/                        # Direktori utama aplikasi
-│   ├── api/                    # Layer API
-│   │   ├── dependencies/       # Dependency Injection
-│   │   ├── middlewares/        # Custom Middleware
-│   │   └── v1/                 # API Versioning
-│   ├── core/                   # Fungsi inti aplikasi
-│   │   ├── config/             # Konfigurasi modular
-│   │   │   ├── app.py
-│   │   │   ├── database.py
-│   │   │   ├── security.py
-│   │   │   └── storage.py
-│   │   ├── exceptions/         # Custom Exception
-│   │   └── data_types.py       # Tipe data bersama
-│   ├── domain/                 # Domain Layer
-│   │   ├── interfaces/         # Interface abstrak
-│   │   │   ├── repository_interface.py
-│   │   │   ├── service_interface.py
-│   │   │   ├── cache_interface.py
-│   │   │   ├── storage_interface.py
-│   │   │   └── auth_interface.py
-│   │   └── models/             # Model domain
-│   │       ├── base_model.py
-│   │       ├── user.py
-│   │       ├── role.py
-│   │       ├── permission.py
-│   │       └── navigation.py
-│   ├── infrastructure/         # Infrastructure Layer
-│   │   ├── database/
-│   │   │   └── session.py
-│   │   ├── cache/
-│   │   │   └── redis_cache.py
-│   │   ├── storage/
-│   │   │   └── minio_storage.py
-│   │   └── security/
-│   │       ├── jwt.py
-│   │       └── password.py
-│   ├── repositories/           # Data Access Layer
-│   ├── services/               # Business Logic Layer
-│   └── utils/                  # Utility functions
-├── assets/                     # File statis (jika ada)
-├── docker-compose.yml          # Konfigurasi Docker Compose
-├── migrations/                 # Script migrasi database Alembic
-│   ├── README
-│   ├── env.py
-│   ├── script.py.mako
-│   ├── scripts.py
-│   └── versions/               # File versi migrasi
-│       └── __init__.py
-├── poetry.lock                 # File lock dependensi Poetry
-├── pyproject.toml              # Konfigurasi proyek Poetry
-├── run.py                      # Script menjalankan server Uvicorn lokal
-└── tests/                      # Direktori unit & integration test
-    ├── __init__.py
-    ├── conftest.py             # Konfigurasi Pytest
-    ├── test_api/
-    │   └── __init__.py
-    └── test_services/
-        └── __init__.py
+app/
+  features/
+    <feature>/
+      entities/            # Domain (Entities/Value Objects) — pure Python
+      use_cases/           # Application orchestrations per scenario (CreateX/ListY)
+        ports.py           # Protocol interfaces (Repo/Presenter/etc)
+      adapters/            # Infrastructure adapters for this feature
+        repositories/      # SQLAlchemy/HTTP/etc implementing ports
+        presenters/        # Entity → DTO/response mapper
+      api/                 # FastAPI routers & feature-specific dependencies
+        routes.py
+        schemas.py         # Pydantic models (only here)
+  platform/
+    fastapi/
+      app.py               # create_app(), include feature routers
+      dependencies.py      # global DI: session, id_gen, event bus, etc.
+    db/
+      engine.py            # engine/session factory
+      models.py            # (optional) ORM models; or split per feature
+    config.py              # Pydantic BaseSettings (.env)
+  shared/                  # Small cross-cutting helpers (Result/Errors), keep tiny!
+main.py                    # uvicorn entry: from app.platform.fastapi.app import create_app
 ```
-## How to Run the Project
 
-### 1. Initial Setup
+**Absolute imports** recommended: `from app.features.users.entities.user import User`.
 
-*   Ensure you have Python (version >=3.10, <4.0 recommended as per `pyproject.toml`) and Poetry installed.
-*   Copy the `.env.example` file to `.env` and customize its configuration, especially for database and MinIO connections.
-    ```bash
-    cp .env.example .env
-    ```
-*   Edit the `.env` file as needed.
+---
 
-### 2. Running Locally (using Poetry and Uvicorn)
+## 3. Data Flow
 
-1.  **Install dependencies:**
-    ```bash
-    poetry install
-    ```
-2.  **Run database migrations (if necessary):**
-    Ensure the database is running and the configuration in `.env` is correct.
-    ```bash
-    poetry run alembic upgrade head
-    ```
-    Alternatively, if there's a custom script for migrations as seen in `deploy.yml`:
-    ```bash
-    poetry run python migrations/scripts.py
-    ```
-    *(Check the content of `migrations/scripts.py` for the exact command if it differs)*
+1. **HTTP request** hits `api/routes.py` (FastAPI).
+2. Router **builds a use case** with DI: `repo`, `presenter`, `id_gen`, etc.
+3. **Use case** executes business flows on **entities**, calls **repo (ports)**.
+4. **Repo adapter** uses ORM to persist/fetch rows and maps them ↔ **entities**.
+5. **Presenter** returns DTO/dict/Pydantic for HTTP response.
 
-3.  **Run the application server:**
-    ```bash
-    poetry run python run.py
-    ```
-    Or directly using Uvicorn:
-    ```bash
-    poetry run uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
-    ```
-    The application will run at `http://localhost:5000` (or as configured in `.env` and `run.py`).
+```
+HTTP (Pydantic) → API → UseCase → Entities ↔ Repo(ORM) → Presenter → HTTP (Pydantic)
+```
 
-### 3. Running Using Docker
+---
 
-1.  **Ensure Docker and Docker Compose are installed.**
-2.  **Build and run the container:**
-    From the project root directory, run:
-    ```bash
-    docker-compose up --build
-    ```
-    If you have an `environment.env` file (as referenced in `docker-compose.yml`), ensure it exists and contains the necessary environment configurations. Otherwise, you might need to adjust `docker-compose.yml` to use the `.env` file or set environment variables directly.
+## 4. Entities vs ORM vs Pydantic
 
-    The application will run at `http://localhost:5000` (as per port mapping in `docker-compose.yml`).
+- **Entities (domain)**: no FastAPI/SQLAlchemy/Pydantic.
+- **ORM models**: in `platform/db/models.py` (or per-feature under adapters). Never imported by entities/use_cases.
+- **Pydantic schemas**: in `api/schemas.py` only; never imported by entities/use_cases.
 
-## How to Create an Endpoint, Model, Repository, and Service
+**Why** domain w/o ORM/Pydantic?
+- Fast, deterministic unit tests.
+- Low coupling; infrastructure can change without touching business logic.
+- Clear boundaries prevent “big ball of mud”.
 
-This project follows a layered architecture pattern commonly used in FastAPI applications.
+---
 
-### 1. Creating a Model (`app/models/`)
+## 5. Minimal Templates
 
-Models represent tables in your database. They are defined using SQLAlchemy.
-
-Example (e.g., `app/models/item_model.py`):
+### 5.1 Entity (Domain)
 ```python
-from sqlalchemy import Column, Integer, String, ForeignKey, UUID
-from sqlalchemy.orm import relationship
-import uuid6
-from . import Base # Ensure Base is imported from app.models
+# app/features/users/entities/user.py
+from dataclasses import dataclass
 
-class ItemModel(Base):
-    __tablename__ = "items"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid6.uuid7)
-    name = Column(String, index=True)
-    description = Column(String, index=True)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id")) # Example relationship
-
-    owner = relationship("UserModel", back_populates="items") # Adjust to your User model
-```
-*   Don't forget to add the new model to `app/models/__init__.py` if necessary and create a database migration using Alembic.
-    ```bash
-    poetry run alembic revision -m "create_items_table"
-    ```
-    Then edit the newly created migration file in `migrations/versions/` to define the `upgrade()` and `downgrade()` functions, and run:
-    ```bash
-    poetry run alembic upgrade head
-    ```
-
-### 2. Creating a Schema (`app/schemas/`)
-
-Pydantic schemas are used for request data validation and response data formatting.
-
-Example (e.g., `app/schemas/item_schema.py`):
-```python
-from pydantic import BaseModel
-from app.core.data_types import UUID7Field # Or the appropriate UUID type
-from typing import Optional
-
-class ItemBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-class ItemCreateSchema(ItemBase):
-    pass
-
-class ItemUpdateSchema(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-
-class ItemSchema(ItemBase):
-    id: UUID7Field
-    owner_id: UUID7Field
-
-    class Config:
-        orm_mode = True # or from_attributes = True for Pydantic v2
+@dataclass(frozen=True)
+class User:
+  id: str
+  name: str
+  email: str
 ```
 
-### 3. Creating a Repository (`app/repositories/`)
-
-Repositories are responsible for all database interactions related to a model.
-
-Example (e.g., `app/repositories/item_repository.py`):
+### 5.2 Ports (Use Case Interfaces)
 ```python
+# app/features/users/use_cases/ports.py
+from typing import Protocol, Optional, Iterable
+from app.features.users.entities.user import User
+
+class UserRepo(Protocol):
+    def by_id(self, user_id: str) -> Optional[User]: ...
+    def by_email(self, email: str) -> Optional[User]: ...
+    def list(self) -> Iterable[User]: ...
+    def save(self, u: User) -> User: ...
+
+class UserPresenter(Protocol):
+    def present(self, u: User) -> dict: ...
+    def present_many(self, items: Iterable[User]) -> list[dict]: ...
+```
+
+### 5.3 Use Case (Application)
+```python
+# app/features/users/use_cases/create_user.py
+from app.features.users.entities.user import User
+from .ports import UserRepo, UserPresenter
+
+class CreateUser:
+    def __init__(self, repo: UserRepo, presenter: UserPresenter, id_gen):
+        self.repo = repo; self.presenter = presenter; self.id_gen = id_gen
+
+    def execute(self, name: str, email: str) -> dict:
+        if self.repo.by_email(email):
+            raise ValueError("Email exists")
+        u = User(id=self.id_gen(), name=name, email=email)
+        saved = self.repo.save(u)
+        return self.presenter.present(saved)
+```
+
+### 5.4 ORM Model (Infrastructure)
+```python
+# app/platform/db/models.py
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import String
+
+class Base(DeclarativeBase): pass
+
+class SAUser(Base):
+    __tablename__ = "users"
+    id: Mapped[str]    = mapped_column(String, primary_key=True)
+    name: Mapped[str]  = mapped_column(String(120))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+```
+
+### 5.5 Mapper (Infrastructure Adapter)
+```python
+# app/features/users/adapters/repositories/mappers.py
+from app.features.users.entities.user import User
+from app.platform.db.models import SAUser
+
+def to_entity(row: SAUser) -> User:
+    return User(id=row.id, name=row.name, email=row.email)
+
+def to_row(entity: User) -> SAUser:
+    return SAUser(id=entity.id, name=entity.name, email=entity.email)
+```
+
+### 5.6 Repository (Infrastructure Adapter)
+```python
+# app/features/users/adapters/repositories/user_repo_sqlalchemy.py
+from sqlalchemy.orm import Session
 from sqlalchemy import select
-from fastapi_async_sqlalchemy import db # or the appropriate db session
-from app.models.item_model import ItemModel # Import your model
-from .base import BaseRepository # Import BaseRepository
-from app.core.data_types import UUID7Field
+from .mappers import to_entity, to_row
+from app.platform.db.models import SAUser
+from app.features.users.use_cases.ports import UserRepo
+from app.features.users.entities.user import User
 
-class ItemRepository(BaseRepository[ItemModel]):
-    def __init__(self):
-        super().__init__(ItemModel)
+class SAUserRepo(UserRepo):
+    def __init__(self, session: Session): self.s = session
 
-    async def find_by_name(self, name: str) -> ItemModel | None:
-        query = select(self.model).filter(self.model.name == name)
-        result = await db.session.execute(query)
-        return result.scalar_one_or_none()
+    def by_id(self, user_id: str):
+        row = self.s.get(SAUser, user_id)
+        return to_entity(row) if row else None
 
-    # Add other methods as needed (findById, create, update, delete, etc.)
-    # Example find_by_id from UserRepository:
-    async def find_by_id(self, id: UUID7Field) -> ItemModel | None:
-        query = select(self.model).filter(self.model.id == id)
-        result = await db.session.execute(query)
-        return result.scalar_one_or_none()
+    def by_email(self, email: str):
+        row = self.s.execute(select(SAUser).where(SAUser.email == email)).scalar_one_or_none()
+        return to_entity(row) if row else None
+
+    def list(self):
+        for row in self.s.execute(select(SAUser)).scalars():
+            yield to_entity(row)
+
+    def save(self, u: User) -> User:
+        self.s.merge(to_row(u))
+        self.s.flush()
+        row = self.s.get(SAUser, u.id)
+        return to_entity(row)
 ```
-*   Ensure to register the new repository in `app/api/dependencies/factory.py` if you are using the factory pattern for dependencies.
 
-### 4. Creating a Service (`app/services/`)
-
-Services contain the application's business logic. Services will use repositories to interact with data.
-
-Example (e.g., `app/services/item_service.py`):
+### 5.7 Pydantic Schemas (Interface)
 ```python
-from typing import Dict, List, Tuple, Union
-from uuid6 import UUID # or from app.core.data_types import UUID7Field
-from fastapi import HTTPException, status
+# app/features/users/api/schemas.py
+from pydantic import BaseModel, EmailStr
 
-from app.models.item_model import ItemModel
-from app.repositories.item_repository import ItemRepository
-from app.schemas.item_schema import ItemCreateSchema, ItemUpdateSchema, ItemSchema # Import your schemas
-from app.schemas.user_schema import UserSchema # For user info performing the action
-from .base import BaseService
-from app.core.exceptions import NotFoundException
+class CreateUserIn(BaseModel):
+    name: str
+    email: EmailStr
 
-class ItemService(BaseService[ItemModel, ItemRepository]):
-    def __init__(self, repository: ItemRepository):
-        super().__init__(ItemModel, repository)
-        # self.user_service = user_service # If other services are needed
-
-    async def create_item(self, item_data: ItemCreateSchema, current_user: UserSchema) -> ItemModel:
-        # Business logic before creating the item
-        # For example, check if an item with the same name already exists
-        existing_item = await self.repository.find_by_name(item_data.name)
-        if existing_item:
-            raise HTTPException(status_code=400, detail="Item with this name already exists")
-
-        item_dict = item_data.model_dump()
-        item_dict['owner_id'] = current_user.id # Example of setting the owner
-        return await self.repository.create(item_dict)
-
-    async def get_item_by_id(self, item_id: UUID, current_user: UserSchema) -> ItemModel:
-        item = await self.repository.find_by_id(item_id)
-        if not item:
-            raise NotFoundException(f"Item with id {item_id} not found")
-        # Business logic for authorization, for example:
-        # if item.owner_id != current_user.id and not current_user.is_admin:
-        #     raise HTTPException(status_code=403, detail="Not authorized to access this item")
-        return item
-
-    # Add other methods (update, delete, get_all, etc.)
+class UserOut(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
 ```
-*   Ensure to register the new service in `app/api/dependencies/factory.py`.
 
-### 5. Creating an Endpoint (`app/api/v1/routes/`)
-
-Endpoints are the HTTP entry points to your application. They are defined using FastAPI APIRouter.
-
-Example (e.g., `app/api/v1/routes/item_route.py`):
+### 5.8 Presenter (Interface Adapter)
 ```python
-from typing import List
-from fastapi import APIRouter, Depends, status
+# app/features/users/adapters/presenters/user_presenter.py
+from app.features.users.entities.user import User
+from app.features.users.api.schemas import UserOut
 
-from app.api.dependencies.auth import get_current_active_user # Authentication dependency
-from app.api.dependencies.factory import Factory # Factory for service dependencies
-from app.core.data_types import UUID7Field
-from app.schemas.item_schema import ItemCreateSchema, ItemSchema, ItemUpdateSchema # Your schemas
-from app.schemas.user_schema import UserSchema # User schema for auth dependency
-from app.services.item_service import ItemService # Your service
-from app.schemas.base import PaginatedResponse # If using pagination
-from app.core.params import CommonParams # If using common parameters
+class UserPresenter:
+    def present(self, u: User) -> dict:
+        return UserOut(id=u.id, name=u.name, email=u.email).model_dump()
+
+    def present_many(self, items):
+        return [self.present(i) for i in items]
+```
+
+### 5.9 Router (Interface)
+```python
+# app/features/users/api/routes.py
+from fastapi import APIRouter, Depends
+from .schemas import CreateUserIn, UserOut
+from app.platform.fastapi.dependencies import get_user_repo, get_id_gen
+from app.features.users.use_cases.create_user import CreateUser
+from app.features.users.adapters.presenters.user_presenter import UserPresenter
 
 router = APIRouter()
 
-@router.post("/items", response_model=ItemSchema, status_code=status.HTTP_201_CREATED)
-async def create_item(
-    item_in: ItemCreateSchema,
-    current_user: UserSchema = Depends(get_current_active_user),
-    service: ItemService = Depends(Factory().get_item_service), # Get service from factory
-):
-    item = await service.create_item(item_data=item_in, current_user=current_user)
-    return item
-
-@router.get("/items/{item_id}", response_model=ItemSchema)
-async def read_item(
-    item_id: UUID7Field,
-    current_user: UserSchema = Depends(get_current_active_user),
-    service: ItemService = Depends(Factory().get_item_service),
-):
-    item = await service.get_item_by_id(item_id=item_id, current_user=current_user)
-    return item
-
-# Add other endpoints (GET all, PUT/PATCH, DELETE)
-# Example GET all with pagination:
-@router.get("/items", response_model=PaginatedResponse[ItemSchema])
-async def get_items(
-    params: CommonParams = Depends(),
-    user_active: UserSchema = Depends(get_current_active_user),
-    service: ItemService = Depends(Factory().get_item_service),
-):
-    # Assume your service has a find_all method similar to UserService
-    items, total = await service.find_all(
-        filters=params.filter,
-        sort=params.sort,
-        search=params.search,
-        limit=params.limit,
-        offset=params.offset,
-        user=user_active, # For access control if needed
-    )
-
-    return PaginatedResponse(
-        items=[ItemSchema.model_validate(item) for item in items],
-        total=total,
-        limit=params.limit,
-        offset=params.offset,
-        has_more=total > (offset + params.limit),
-    )
-
+@router.post("/users", response_model=UserOut)
+def create_user(payload: CreateUserIn,
+                repo = Depends(get_user_repo),
+                id_gen = Depends(get_id_gen)):
+    uc = CreateUser(repo=repo, presenter=UserPresenter(), id_gen=id_gen)
+    return uc.execute(name=payload.name, email=payload.email)
 ```
-*   Register the new router in `app/api/v1/__init__.py` or `app/main.py`.
-    Example in `app/main.py`:
-    ```python
-    // ... existing code ...
-    from app.api.v1.routes import item_route # Import your new router
-    // ... existing code ...
 
-    app.include_router(item_route.router, prefix="/api/v1", tags=["Items"])
-    // ... existing code ...
-    ```
+---
 
-## How to Deploy
+## 6. Platform Wiring
 
-This project is configured to be deployed using GitHub Actions when there is a push to the `main` branch or via manual trigger.
+### 6.1 FastAPI App
+```python
+# app/platform/fastapi/app.py
+from fastapi import FastAPI
 
-The deployment process defined in <mcfile path="/.github/workflows/deploy.yml" name="deploy.yml"></mcfile> is as follows:
+def create_app() -> FastAPI:
+    app = FastAPI()
+    # Import and include routers per feature
+    from app.features.users.api.routes import router as users_router
+    app.include_router(users_router, prefix="/users", tags=["users"])
+    return app
+```
 
-1.  **Checkout Code**: The code from the repository is fetched.
-2.  **Set up Docker Buildx**: Prepares the environment for building Docker images.
-3.  **Build and Export Docker image**: The Docker image `portal-satu-peta-backend:latest` is built and exported as a `.tar` file.
-    *   Uses cache from GitHub Actions (GHA) to speed up the build process.
-4.  **Copy Docker image to server via SCP**: The `portal-satu-peta-backend.tar` file is copied to the target server (defined by secrets `SSH_HOST`, `SSH_USER`, `SSH_PORT`, `SSH_PASSWORD`).
-5.  **Deploy container**: An SSH script is executed on the target server:
-    *   **Load image**: The Docker image from the `.tar` file is loaded into Docker on the server.
-    *   **Stop and Remove Old Container**: The old container named `portal-satu-peta-backend` is stopped and removed (if it exists).
-    *   **Run New Container**: A new container is run from the newly loaded image:
-        *   Container name: `portal-satu-peta-backend`
-        *   Restart policy: `unless-stopped`
-        *   Environment file: `/home/application/.env` (ensure this file exists and is configured on the server)
-        *   Port mapping: `5000:5000` (host port 5000 to container port 5000)
-        *   Health check configuration.
-    *   **Run Migrations**: The command `docker exec portal-satu-peta-backend python migrations/scripts.py` is executed inside the newly running container to perform database migrations.
-    *   **Prune Old Images**: Old, unused Docker images (older than 24 hours) are removed to save disk space.
-    *   **Clean Up**: The copied `.tar` file is removed from the server.
-    *   **Verify Status**: The status of the `portal-satu-peta-backend` container is verified.
+**Entry point**: `main.py`
+```python
+from app.platform.fastapi.app import create_app
+app = create_app()
+```
 
-### Server Requirements for Deployment:
+### 6.2 Dependencies
+```python
+# app/platform/fastapi/dependencies.py
+from functools import lru_cache
+from fastapi import Depends
+from app.platform.db.engine import session_factory
+from app.features.users.adapters.repositories.user_repo_sqlalchemy import SAUserRepo
 
-*   Linux server with SSH access.
-*   Docker installed on the server.
-*   An environment file (e.g., `/home/application/.env`) must exist on the server and contain the correct configurations for production (database, secret keys, etc.).
-*   The SSH user used must have permissions to run Docker commands and access the necessary paths.
+def get_session():
+    with session_factory() as s:
+        yield s
 
-### GitHub Secrets Configuration:
+def get_user_repo(s = Depends(get_session)):
+    return SAUserRepo(session=s)
 
-Ensure the following secrets are configured in your GitHub repository (Settings > Secrets and variables > Actions):
+@lru_cache
+def get_id_gen():
+    import uuid
+    return lambda: uuid.uuid4().hex
+```
 
-*   `SSH_HOST`: IP address or hostname of the deployment server.
-*   `SSH_USER`: Username for SSH login to the server.
-*   `SSH_PORT`: SSH server port (usually 22).
-*   `SSH_PASSWORD`: Password for the SSH user. (Using SSH keys is highly recommended for security).
+### 6.3 Database & Config
+```python
+# app/platform/db/engine.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.platform.config import Settings
+
+settings = Settings()
+_engine = create_engine(settings.database_url, future=True)
+SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
+
+def session_factory():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+```
+
+```python
+# app/platform/config.py
+from functools import lru_cache
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str
+    secret_key: str = "change-me"
+    class Config:
+        env_file = ".env"
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+```
+
+---
+
+## 7. Testing Strategy
+
+- **Unit (fast)**: domain & use cases with **fakes** (no FastAPI/ORM).
+- **Integration**: repositories against test DB (transaction rollback).
+- **API/E2E**: `TestClient(app)`; override DI for test isolation.
+
+Example unit test:
+
+```python
+# tests/unit/features/users/test_create_user.py
+from app.features.users.use_cases.create_user import CreateUser
+from app.features.users.entities.user import User
+
+class FakeRepo:
+    def __init__(self): self._emails=set()
+    def by_email(self, email): return None if email not in self._emails else User("1","dup",email)
+    def list(self): return []
+    def save(self, u: User): return u
+
+class FakePresenter:
+    def present(self, u: User): return u.__dict__
+    def present_many(self, items): return [i.__dict__ for i in items]
+
+def test_create_user_ok():
+    uc = CreateUser(repo=FakeRepo(), presenter=FakePresenter(), id_gen=lambda: "X")
+    out = uc.execute(name="Faisal", email="f@x.com")
+    assert out["id"] == "X"
+```
+
+---
+
+## 8. Add a New Feature (Checklist)
+
+1. `mkdir -p app/features/<feature>/{entities,use_cases,adapters/repositories,adapters/presenters,api}`
+2. Add **entities** (domain).
+3. Define **ports** + **use cases**.
+4. Implement **repo adapter** + **mappers**; add **presenter**.
+5. Create **schemas** + **routes**.
+6. Register router in `create_app()` (or rely on auto-include pattern if implemented).
+7. Write **unit tests** first; then integration tests for repo.
+
+---
+
+## 9. Guardrails
+
+- Enforce imports with `import-linter` (optional but recommended):
+  ```ini
+  [importlinter]
+  root_package=app
+
+  [contract:vertical_slices]
+  name=Vertical Slice Boundaries
+  type=layers
+  layers=app.features.*.api; app.features.*.use_cases; app.features.*.entities
+  containers=app.features.*
+  ```
+- Keep `shared/` tiny to avoid a “god module”.
+- Never raise `HTTPException` in use cases; map errors in API layer.
+
+---
+
+## 10. FAQ / Trade-offs
+
+- **“Kenapa pisahkan entity dari ORM/Pydantic?”** → Test cepat, coupling rendah, batas jelas untuk evolusi.
+- **“Terlalu banyak file?”** → Betul di awal. Balasnya: maintainability & reusability tinggi; mudah dipecah ke service terpisah nanti.
+- **“Bisa langsung pakai ORM sebagai entity?”** → Untuk CRUD simpel, bisa pragmatis. Tapi set mappers dari hari pertama agar migrasi ke domain murni mudah saat kompleksitas tumbuh.
+- **“DI bikin lambat?”** → Overhead Python-level kecil; bottleneck nyata biasanya di IO/DB. Boundary ini justru memudahkan caching/batching.
+
+---
+
+## 11. Quickstart
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload
+# visit http://127.0.0.1:8000/docs
+```
+
+> If an import error appears after refactor, check your new module path and keep the dependency rule intact.

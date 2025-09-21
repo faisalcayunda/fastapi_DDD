@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "portal-satu-peta-backend"
 version = "0.1.0"
-description = "Backend untuk Portal Data Satu Peta"
+description = "Backend untuk Portal Data"
 authors = ["Trikintech <trikintech@gmail.com>"]
 readme = "README.md"
 
@@ -16,7 +16,6 @@ passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}
 alembic = ">=1.15.2,<2.0.0"
 orjson = ">=3.10.16,<4.0.0"
 uuid6 = ">=2024.7.10,<2025.0.0"
-fastapi-async-sqlalchemy = ">=0.6.1,<0.7.0"
 greenlet = ">=3.2.1,<4.0.0"
 brotli-asgi = ">=1.4.0,<2.0.0"
 miniopy-async = ">=1.22.1,<2.0.0"
@@ -25,13 +24,11 @@ python-multipart = ">=0.0.20,<0.0.21"
 itsdangerous = ">=2.2.0,<3.0.0"
 pytz = "^2025.2"
 shapely = "^2.1.0"
-colour = "^0.1.5"
 httpx = {extras = ["http2"], version = "^0.28.1"}
 psutil = "^7.0.0"
-aiomysql = "^0.2.0"
 slowapi = "^0.1.9"
 aiocache = "^0.12.3"
-sqlmodel = "^0.0.24"
+argon2-cffi = ">=23.1.0,<24.0.0"
 
 
 
